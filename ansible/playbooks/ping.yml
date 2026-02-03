@@ -1,0 +1,19 @@
+---
+# Playbook: Test connessione SSH
+# Uso: ansible-playbook playbooks/ping.yml
+
+- name: Test connessione a tutte le VM
+  hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: Ping
+      ansible.builtin.ping:
+
+    - name: Mostra hostname
+      ansible.builtin.command: hostname
+      register: result
+
+    - name: Output
+      ansible.builtin.debug:
+        msg: "Connesso a {{ result.stdout }} ({{ ansible_host }})"

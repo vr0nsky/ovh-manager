@@ -1,0 +1,43 @@
+---
+# Playbook: Setup base per VM OVH
+# Uso: ansible-playbook playbooks/setup-base.yml
+
+- name: Setup base server
+  hosts: all
+  become: true
+
+  tasks:
+    - name: Aggiorna cache apt
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Installa pacchetti base
+      ansible.builtin.apt:
+        name:
+          - curl
+          - wget
+          - vim
+          - htop
+          - git
+          - unzip
+          - net-tools
+          - jq
+        state: present
+
+    - name: Imposta timezone
+      community.general.timezone:
+        name: Europe/Rome
+
+    - name: Disabilita login SSH con password
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?PasswordAuthentication'
+        line: 'PasswordAuthentication no'
+      notify: Riavvia SSH
+
+  handlers:
+    - name: Riavvia SSH
+      ansible.builtin.service:
+        name: ssh
+        state: restarted

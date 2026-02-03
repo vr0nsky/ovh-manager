@@ -1,0 +1,55 @@
+---
+# Playbook: Mostra risorse delle VM
+# Uso: ansible-playbook playbooks/system-info.yml
+
+- name: Risorse di sistema
+  hosts: all
+  gather_facts: false
+  become: true
+
+  tasks:
+    - name: Raccogli info sistema
+      ansible.builtin.shell: |
+        echo "================================================================"
+        echo "  $(hostname) - $(hostname -I | awk '{print $1}')"
+        echo "================================================================"
+        echo ""
+        echo "--- SISTEMA ---"
+        echo "  Hostname:  $(hostname)"
+        echo "  OS:        $(. /etc/os-release && echo "$PRETTY_NAME")"
+        echo "  Kernel:    $(uname -r)"
+        echo "  Arch:      $(uname -m)"
+        echo "  Uptime:    $(uptime -p)"
+        echo "  Load:      $(cat /proc/loadavg | awk '{print $1, $2, $3}')"
+        echo ""
+        echo "--- CPU ---"
+        echo "  Modello:   $(grep 'model name' /proc/cpuinfo | head -1 | cut -d: -f2 | xargs)"
+        echo "  Core:      $(nproc)"
+        echo ""
+        echo "--- MEMORIA ---"
+        free -h | awk '
+          /Mem:/ { printf "  RAM:       %s usata / %s totale (%s libera)\n", $3, $2, $4 }
+          /Swap:/ { printf "  Swap:      %s usata / %s totale\n", $3, $2 }
+        '
+        echo ""
+        echo "--- DISCO ---"
+        df -h -x tmpfs -x devtmpfs -x squashfs --output=target,size,used,avail,pcent | head -10
+        echo ""
+        echo "--- RETE ---"
+        ip -4 addr show | awk '/inet / { split($2,a,"/"); printf "  %-10s %s\n", $NF, a[1] }'
+        echo ""
+        echo "--- PORTE IN ASCOLTO ---"
+        ss -tlnp | awk 'NR>1 { split($4,a,":"); printf "  %-6s %s\n", a[length(a)], $6 }' | sed 's/users:(("/  /;s/".*//' | head -15
+        echo ""
+        echo "--- TOP 5 PROCESSI (CPU) ---"
+        ps aux --sort=-%cpu | awk 'NR<=6 { printf "  %-10s %5s%% CPU  %5s%% MEM  %s\n", $1, $3, $4, $11 }'
+        echo ""
+        echo "--- TOP 5 PROCESSI (RAM) ---"
+        ps aux --sort=-%mem | awk 'NR<=6 { printf "  %-10s %5s%% MEM  %5s%% CPU  %s\n", $1, $4, $3, $11 }'
+        echo ""
+      register: info
+      changed_when: false
+
+    - name: "{{ inventory_hostname }}"
+      ansible.builtin.debug:
+        msg: "{{ info.stdout_lines }}"

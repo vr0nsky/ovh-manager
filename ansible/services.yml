@@ -1,0 +1,828 @@
+# =============================================================================
+# Catalogo servizi per generate-playbook.py
+# Aggiungi nuovi servizi qui - lo script li legge automaticamente
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# SISTEMA
+# -----------------------------------------------------------------------------
+
+base:
+  name: Setup base
+  category: Sistema
+  desc: Aggiorna sistema, pacchetti essenziali, timezone
+  tasks:
+    - name: Aggiorna cache apt
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+    - name: Upgrade pacchetti
+      ansible.builtin.apt:
+        upgrade: safe
+    - name: Installa pacchetti essenziali
+      ansible.builtin.apt:
+        name:
+          - curl
+          - wget
+          - vim
+          - htop
+          - git
+          - unzip
+          - net-tools
+          - jq
+          - tmux
+          - software-properties-common
+          - ca-certificates
+          - gnupg
+          - lsb-release
+        state: present
+    - name: Imposta timezone Europe/Rome
+      community.general.timezone:
+        name: Europe/Rome
+
+swap:
+  name: Swap file (2GB)
+  category: Sistema
+  desc: Aggiunge 2GB di swap
+  tasks:
+    - name: Crea, formatta e attiva swap
+      ansible.builtin.shell: |
+        if swapon --show | grep -q /swapfile; then
+          echo "Swap gia attivo"
+        else
+          fallocate -l 2G /swapfile
+          chmod 600 /swapfile
+          mkswap /swapfile
+          swapon /swapfile
+          echo "Swap creato e attivato"
+        fi
+      register: swap_result
+      changed_when: "'creato' in swap_result.stdout"
+    - name: Swap permanente in fstab
+      ansible.builtin.lineinfile:
+        path: /etc/fstab
+        line: "/swapfile none swap sw 0 0"
+        state: present
+
+# -----------------------------------------------------------------------------
+# WEB SERVER
+# -----------------------------------------------------------------------------
+
+nginx:
+  name: Nginx
+  category: Web Server
+  desc: Web server / reverse proxy
+  tasks:
+    - name: Installa Nginx
+      ansible.builtin.apt:
+        name: nginx
+        state: present
+    - name: Avvia e abilita Nginx
+      ansible.builtin.service:
+        name: nginx
+        state: started
+        enabled: true
+
+apache:
+  name: Apache
+  category: Web Server
+  desc: Web server classico
+  tasks:
+    - name: Installa Apache
+      ansible.builtin.apt:
+        name:
+          - apache2
+          - apache2-utils
+        state: present
+    - name: Abilita mod_rewrite
+      ansible.builtin.command: a2enmod rewrite
+    - name: Avvia e abilita Apache
+      ansible.builtin.service:
+        name: apache2
+        state: started
+        enabled: true
+
+caddy:
+  name: Caddy
+  category: Web Server
+  desc: Web server con HTTPS automatico
+  tasks:
+    - name: Aggiungi repository Caddy
+      ansible.builtin.shell: |
+        curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+        curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | tee /etc/apt/sources.list.d/caddy-stable.list
+      args:
+        creates: /etc/apt/sources.list.d/caddy-stable.list
+    - name: Installa Caddy
+      ansible.builtin.apt:
+        name: caddy
+        state: present
+        update_cache: true
+    - name: Avvia e abilita Caddy
+      ansible.builtin.service:
+        name: caddy
+        state: started
+        enabled: true
+
+certbot:
+  name: Certbot (Let's Encrypt)
+  category: Web Server
+  desc: Certificati HTTPS automatici
+  tasks:
+    - name: Installa Certbot
+      ansible.builtin.apt:
+        name:
+          - certbot
+          - python3-certbot-nginx
+          - python3-certbot-apache
+        state: present
+
+# -----------------------------------------------------------------------------
+# LINGUAGGI / RUNTIME
+# -----------------------------------------------------------------------------
+
+php:
+  name: PHP 8.x + FPM
+  category: Linguaggi
+  desc: PHP con FPM, moduli comuni
+  tasks:
+    - name: Aggiungi repository PHP (ondrej)
+      ansible.builtin.shell: |
+        CODENAME=$(lsb_release -sc)
+        # Sury supporta le LTS (noble, jammy...). Se non supportata, fallback a noble
+        curl -fsSL https://packages.sury.org/php/apt.gpg | gpg --dearmor -o /usr/share/keyrings/php-sury.gpg
+        if ! curl -sfL "https://packages.sury.org/php/dists/${CODENAME}/InRelease" -o /dev/null 2>/dev/null; then
+          CODENAME="noble"
+        fi
+        echo "deb [signed-by=/usr/share/keyrings/php-sury.gpg] https://packages.sury.org/php/ ${CODENAME} main" > /etc/apt/sources.list.d/php-sury.list
+      args:
+        creates: /etc/apt/sources.list.d/php-sury.list
+    - name: Installa PHP e moduli
+      ansible.builtin.apt:
+        name:
+          - php
+          - php-fpm
+          - php-cli
+          - php-mysql
+          - php-pgsql
+          - php-sqlite3
+          - php-curl
+          - php-gd
+          - php-mbstring
+          - php-xml
+          - php-zip
+          - php-intl
+          - php-bcmath
+          - php-json
+          - php-opcache
+          - php-readline
+        state: present
+        update_cache: true
+    - name: Avvia PHP-FPM
+      ansible.builtin.shell: |
+        PHP_VER=$(php -r 'echo PHP_MAJOR_VERSION.".".PHP_MINOR_VERSION;')
+        systemctl enable --now php${PHP_VER}-fpm
+
+composer:
+  name: Composer
+  category: Linguaggi
+  desc: Package manager PHP
+  tasks:
+    - name: Scarica e installa Composer
+      ansible.builtin.shell: |
+        curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer
+      args:
+        creates: /usr/local/bin/composer
+
+nodejs:
+  name: Node.js 22 LTS
+  category: Linguaggi
+  desc: JavaScript runtime + npm
+  tasks:
+    - name: Aggiungi repository NodeSource
+      ansible.builtin.shell: "curl -fsSL https://deb.nodesource.com/setup_22.x | bash -"
+      args:
+        creates: /etc/apt/sources.list.d/nodesource.list
+    - name: Installa Node.js
+      ansible.builtin.apt:
+        name: nodejs
+        state: present
+        update_cache: true
+
+python:
+  name: Python 3 + pip + venv
+  category: Linguaggi
+  desc: Python development
+  tasks:
+    - name: Installa Python3 e strumenti
+      ansible.builtin.apt:
+        name:
+          - python3
+          - python3-pip
+          - python3-venv
+          - python3-dev
+          - build-essential
+        state: present
+
+golang:
+  name: Go (Golang)
+  category: Linguaggi
+  desc: Go programming language
+  tasks:
+    - name: Scarica Go
+      ansible.builtin.get_url:
+        url: "https://go.dev/dl/go1.23.5.linux-amd64.tar.gz"
+        dest: /tmp/go.tar.gz
+    - name: Installa Go
+      ansible.builtin.unarchive:
+        src: /tmp/go.tar.gz
+        dest: /usr/local/
+        remote_src: true
+        creates: /usr/local/go/bin/go
+    - name: Aggiungi Go al PATH
+      ansible.builtin.lineinfile:
+        path: /etc/profile.d/go.sh
+        line: "export PATH=$PATH:/usr/local/go/bin"
+        create: true
+
+ruby:
+  name: Ruby + Bundler
+  category: Linguaggi
+  desc: Ruby runtime
+  tasks:
+    - name: Installa Ruby
+      ansible.builtin.apt:
+        name:
+          - ruby
+          - ruby-dev
+          - ruby-bundler
+        state: present
+
+java:
+  name: Java (OpenJDK 21)
+  category: Linguaggi
+  desc: Java runtime e compilatore
+  tasks:
+    - name: Installa OpenJDK
+      ansible.builtin.apt:
+        name:
+          - openjdk-21-jdk
+          - openjdk-21-jre
+        state: present
+
+rust:
+  name: Rust (via rustup)
+  category: Linguaggi
+  desc: Rust toolchain
+  tasks:
+    - name: Installa Rust
+      ansible.builtin.shell: "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y"
+      args:
+        creates: /root/.cargo/bin/rustc
+
+# -----------------------------------------------------------------------------
+# DATABASE
+# -----------------------------------------------------------------------------
+
+postgresql:
+  name: PostgreSQL
+  category: Database
+  desc: Database relazionale avanzato
+  tasks:
+    - name: Installa PostgreSQL
+      ansible.builtin.apt:
+        name:
+          - postgresql
+          - postgresql-contrib
+          - libpq-dev
+        state: present
+    - name: Avvia e abilita PostgreSQL
+      ansible.builtin.service:
+        name: postgresql
+        state: started
+        enabled: true
+
+mysql:
+  name: MariaDB
+  category: Database
+  desc: Database MySQL-compatibile
+  tasks:
+    - name: Installa MariaDB
+      ansible.builtin.apt:
+        name:
+          - mariadb-server
+          - mariadb-client
+        state: present
+    - name: Avvia e abilita MariaDB
+      ansible.builtin.service:
+        name: mariadb
+        state: started
+        enabled: true
+
+mongodb:
+  name: MongoDB
+  category: Database
+  desc: Database NoSQL document-based
+  tasks:
+    - name: Aggiungi chiave GPG MongoDB
+      ansible.builtin.shell: |
+        curl -fsSL https://www.mongodb.org/static/pgp/server-8.0.asc | gpg --dearmor -o /usr/share/keyrings/mongodb-server-8.0.gpg
+      args:
+        creates: /usr/share/keyrings/mongodb-server-8.0.gpg
+    - name: Aggiungi repository MongoDB
+      ansible.builtin.apt_repository:
+        repo: "deb [signed-by=/usr/share/keyrings/mongodb-server-8.0.gpg] https://repo.mongodb.org/apt/ubuntu jammy/mongodb-org/8.0 multiverse"
+        state: present
+    - name: Installa MongoDB
+      ansible.builtin.apt:
+        name: mongodb-org
+        state: present
+        update_cache: true
+    - name: Avvia e abilita MongoDB
+      ansible.builtin.service:
+        name: mongod
+        state: started
+        enabled: true
+
+sqlite:
+  name: SQLite
+  category: Database
+  desc: Database embedded leggero
+  tasks:
+    - name: Installa SQLite
+      ansible.builtin.apt:
+        name:
+          - sqlite3
+          - libsqlite3-dev
+        state: present
+
+# -----------------------------------------------------------------------------
+# CACHE / CODE
+# -----------------------------------------------------------------------------
+
+redis:
+  name: Redis
+  category: Cache / Code
+  desc: Cache in-memory e message broker
+  tasks:
+    - name: Installa Redis
+      ansible.builtin.apt:
+        name: redis-server
+        state: present
+    - name: Avvia e abilita Redis
+      ansible.builtin.service:
+        name: redis-server
+        state: started
+        enabled: true
+
+memcached:
+  name: Memcached
+  category: Cache / Code
+  desc: Cache distribuita in-memory
+  tasks:
+    - name: Installa Memcached
+      ansible.builtin.apt:
+        name:
+          - memcached
+          - libmemcached-tools
+        state: present
+    - name: Avvia e abilita Memcached
+      ansible.builtin.service:
+        name: memcached
+        state: started
+        enabled: true
+
+rabbitmq:
+  name: RabbitMQ
+  category: Cache / Code
+  desc: Message broker AMQP
+  tasks:
+    - name: Installa RabbitMQ
+      ansible.builtin.apt:
+        name: rabbitmq-server
+        state: present
+    - name: Abilita management plugin
+      ansible.builtin.command: rabbitmq-plugins enable rabbitmq_management
+    - name: Avvia e abilita RabbitMQ
+      ansible.builtin.service:
+        name: rabbitmq-server
+        state: started
+        enabled: true
+
+# -----------------------------------------------------------------------------
+# CONTAINER / VIRTUALIZZAZIONE
+# -----------------------------------------------------------------------------
+
+docker:
+  name: Docker + Compose
+  category: Container
+  desc: Container runtime
+  tasks:
+    - name: Aggiungi chiave GPG Docker
+      ansible.builtin.shell: >
+        curl -fsSL https://download.docker.com/linux/ubuntu/gpg
+        | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+      args:
+        creates: /usr/share/keyrings/docker-archive-keyring.gpg
+    - name: Aggiungi repository Docker
+      ansible.builtin.apt_repository:
+        repo: "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
+        state: present
+    - name: Installa Docker
+      ansible.builtin.apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-compose-plugin
+        state: present
+        update_cache: true
+    - name: Avvia e abilita Docker
+      ansible.builtin.service:
+        name: docker
+        state: started
+        enabled: true
+    - name: Aggiungi utente ubuntu al gruppo docker
+      ansible.builtin.user:
+        name: ubuntu
+        groups: docker
+        append: true
+
+portainer:
+  name: Portainer
+  category: Container
+  desc: UI web per gestire Docker
+  tasks:
+    - name: Crea volume Portainer
+      ansible.builtin.command: docker volume create portainer_data
+      args:
+        creates: /var/lib/docker/volumes/portainer_data
+    - name: Avvia Portainer
+      ansible.builtin.shell: |
+        docker rm -f portainer 2>/dev/null || true
+        docker run -d --name portainer --restart=always \
+          -p 9443:9443 \
+          -v /var/run/docker.sock:/var/run/docker.sock \
+          -v portainer_data:/data \
+          portainer/portainer-ce:latest
+
+# -----------------------------------------------------------------------------
+# SICUREZZA
+# -----------------------------------------------------------------------------
+
+fail2ban:
+  name: Fail2ban
+  category: Sicurezza
+  desc: Protezione brute-force SSH
+  tasks:
+    - name: Installa Fail2ban
+      ansible.builtin.apt:
+        name: fail2ban
+        state: present
+    - name: Configura jail SSH
+      ansible.builtin.copy:
+        dest: /etc/fail2ban/jail.local
+        content: |
+          [sshd]
+          enabled = true
+          port = ssh
+          filter = sshd
+          maxretry = 5
+          bantime = 3600
+          findtime = 600
+    - name: Avvia e abilita Fail2ban
+      ansible.builtin.service:
+        name: fail2ban
+        state: started
+        enabled: true
+
+ufw:
+  name: UFW Firewall
+  category: Sicurezza
+  desc: Firewall (SSH, HTTP, HTTPS)
+  tasks:
+    - name: Installa UFW
+      ansible.builtin.apt:
+        name: ufw
+        state: present
+    - name: Permetti SSH
+      community.general.ufw:
+        rule: allow
+        port: "22"
+        proto: tcp
+    - name: Permetti HTTP
+      community.general.ufw:
+        rule: allow
+        port: "80"
+        proto: tcp
+    - name: Permetti HTTPS
+      community.general.ufw:
+        rule: allow
+        port: "443"
+        proto: tcp
+    - name: Abilita UFW
+      community.general.ufw:
+        state: enabled
+        default: deny
+        direction: incoming
+
+clamav:
+  name: ClamAV
+  category: Sicurezza
+  desc: Antivirus open source
+  tasks:
+    - name: Installa ClamAV
+      ansible.builtin.apt:
+        name:
+          - clamav
+          - clamav-daemon
+        state: present
+    - name: Aggiorna definizioni virus
+      ansible.builtin.command: freshclam
+      ignore_errors: true
+    - name: Avvia e abilita ClamAV
+      ansible.builtin.service:
+        name: clamav-daemon
+        state: started
+        enabled: true
+
+wireguard:
+  name: WireGuard VPN
+  category: Sicurezza
+  desc: VPN moderna e veloce
+  tasks:
+    - name: Installa WireGuard
+      ansible.builtin.apt:
+        name:
+          - wireguard
+          - wireguard-tools
+        state: present
+    - name: Abilita IP forwarding
+      ansible.posix.sysctl:
+        name: net.ipv4.ip_forward
+        value: "1"
+        sysctl_set: true
+        reload: true
+
+# -----------------------------------------------------------------------------
+# MONITORING
+# -----------------------------------------------------------------------------
+
+monitoring:
+  name: Node Exporter
+  category: Monitoring
+  desc: Metriche sistema per Prometheus
+  tasks:
+    - name: Scarica node_exporter
+      ansible.builtin.get_url:
+        url: "https://github.com/prometheus/node_exporter/releases/download/v1.9.0/node_exporter-1.9.0.linux-amd64.tar.gz"
+        dest: /tmp/node_exporter.tar.gz
+    - name: Estrai node_exporter
+      ansible.builtin.unarchive:
+        src: /tmp/node_exporter.tar.gz
+        dest: /usr/local/bin/
+        remote_src: true
+        extra_opts: ["--strip-components=1"]
+        creates: /usr/local/bin/node_exporter
+    - name: Crea servizio systemd
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/node_exporter.service
+        content: |
+          [Unit]
+          Description=Node Exporter
+          After=network.target
+          [Service]
+          ExecStart=/usr/local/bin/node_exporter
+          Restart=always
+          [Install]
+          WantedBy=multi-user.target
+    - name: Avvia e abilita node_exporter
+      ansible.builtin.service:
+        name: node_exporter
+        state: started
+        enabled: true
+        daemon_reload: true
+
+netdata:
+  name: Netdata
+  category: Monitoring
+  desc: Monitoring real-time con dashboard web
+  tasks:
+    - name: Installa Netdata
+      ansible.builtin.shell: |
+        curl https://get.netdata.cloud/kickstart.sh > /tmp/netdata-kickstart.sh
+        bash /tmp/netdata-kickstart.sh --non-interactive --stable-channel
+      args:
+        creates: /usr/sbin/netdata
+
+# -----------------------------------------------------------------------------
+# STACK COMPLETI
+# -----------------------------------------------------------------------------
+
+lamp:
+  name: LAMP Stack
+  category: Stack
+  desc: Apache + PHP + MariaDB
+  tasks:
+    - name: Installa Apache
+      ansible.builtin.apt:
+        name:
+          - apache2
+          - apache2-utils
+        state: present
+    - name: Aggiungi repository PHP (ondrej)
+      ansible.builtin.shell: |
+        CODENAME=$(lsb_release -sc)
+        # Sury supporta le LTS (noble, jammy...). Se non supportata, fallback a noble
+        curl -fsSL https://packages.sury.org/php/apt.gpg | gpg --dearmor -o /usr/share/keyrings/php-sury.gpg
+        if ! curl -sfL "https://packages.sury.org/php/dists/${CODENAME}/InRelease" -o /dev/null 2>/dev/null; then
+          CODENAME="noble"
+        fi
+        echo "deb [signed-by=/usr/share/keyrings/php-sury.gpg] https://packages.sury.org/php/ ${CODENAME} main" > /etc/apt/sources.list.d/php-sury.list
+      args:
+        creates: /etc/apt/sources.list.d/php-sury.list
+    - name: Installa PHP e moduli
+      ansible.builtin.apt:
+        name:
+          - php
+          - libapache2-mod-php
+          - php-mysql
+          - php-curl
+          - php-gd
+          - php-mbstring
+          - php-xml
+          - php-zip
+          - php-intl
+          - php-bcmath
+        state: present
+        update_cache: true
+    - name: Installa MariaDB
+      ansible.builtin.apt:
+        name:
+          - mariadb-server
+          - mariadb-client
+        state: present
+    - name: Avvia servizi
+      ansible.builtin.service:
+        name: "{{ item }}"
+        state: started
+        enabled: true
+      loop:
+        - apache2
+        - mariadb
+
+lemp:
+  name: LEMP Stack
+  category: Stack
+  desc: Nginx + PHP-FPM + MariaDB
+  tasks:
+    - name: Installa Nginx
+      ansible.builtin.apt:
+        name: nginx
+        state: present
+    - name: Aggiungi repository PHP (ondrej)
+      ansible.builtin.shell: |
+        CODENAME=$(lsb_release -sc)
+        # Sury supporta le LTS (noble, jammy...). Se non supportata, fallback a noble
+        curl -fsSL https://packages.sury.org/php/apt.gpg | gpg --dearmor -o /usr/share/keyrings/php-sury.gpg
+        if ! curl -sfL "https://packages.sury.org/php/dists/${CODENAME}/InRelease" -o /dev/null 2>/dev/null; then
+          CODENAME="noble"
+        fi
+        echo "deb [signed-by=/usr/share/keyrings/php-sury.gpg] https://packages.sury.org/php/ ${CODENAME} main" > /etc/apt/sources.list.d/php-sury.list
+      args:
+        creates: /etc/apt/sources.list.d/php-sury.list
+    - name: Installa PHP-FPM e moduli
+      ansible.builtin.apt:
+        name:
+          - php-fpm
+          - php-mysql
+          - php-curl
+          - php-gd
+          - php-mbstring
+          - php-xml
+          - php-zip
+          - php-intl
+          - php-bcmath
+        state: present
+        update_cache: true
+    - name: Installa MariaDB
+      ansible.builtin.apt:
+        name:
+          - mariadb-server
+          - mariadb-client
+        state: present
+    - name: Avvia Nginx
+      ansible.builtin.service:
+        name: nginx
+        state: started
+        enabled: true
+    - name: Avvia MariaDB
+      ansible.builtin.service:
+        name: mariadb
+        state: started
+        enabled: true
+    - name: Avvia PHP-FPM
+      ansible.builtin.shell: |
+        PHP_VER=$(php -r 'echo PHP_MAJOR_VERSION.".".PHP_MINOR_VERSION;')
+        systemctl enable --now php${PHP_VER}-fpm
+
+mean:
+  name: MEAN Stack
+  category: Stack
+  desc: MongoDB + Express + Angular + Node.js
+  tasks:
+    - name: Aggiungi repository NodeSource
+      ansible.builtin.shell: "curl -fsSL https://deb.nodesource.com/setup_22.x | bash -"
+      args:
+        creates: /etc/apt/sources.list.d/nodesource.list
+    - name: Installa Node.js
+      ansible.builtin.apt:
+        name: nodejs
+        state: present
+        update_cache: true
+    - name: Installa Angular CLI e Express
+      ansible.builtin.command: npm install -g @angular/cli express-generator
+    - name: Aggiungi chiave GPG MongoDB
+      ansible.builtin.shell: |
+        curl -fsSL https://www.mongodb.org/static/pgp/server-8.0.asc | gpg --dearmor -o /usr/share/keyrings/mongodb-server-8.0.gpg
+      args:
+        creates: /usr/share/keyrings/mongodb-server-8.0.gpg
+    - name: Aggiungi repository MongoDB
+      ansible.builtin.apt_repository:
+        repo: "deb [signed-by=/usr/share/keyrings/mongodb-server-8.0.gpg] https://repo.mongodb.org/apt/ubuntu jammy/mongodb-org/8.0 multiverse"
+        state: present
+    - name: Installa MongoDB
+      ansible.builtin.apt:
+        name: mongodb-org
+        state: present
+        update_cache: true
+    - name: Avvia e abilita MongoDB
+      ansible.builtin.service:
+        name: mongod
+        state: started
+        enabled: true
+
+# -----------------------------------------------------------------------------
+# TOOL / UTILITY
+# -----------------------------------------------------------------------------
+
+phpmyadmin:
+  name: phpMyAdmin
+  category: Tool
+  desc: UI web per MySQL/MariaDB
+  tasks:
+    - name: Installa phpMyAdmin
+      ansible.builtin.apt:
+        name: phpmyadmin
+        state: present
+      environment:
+        DEBIAN_FRONTEND: noninteractive
+
+adminer:
+  name: Adminer
+  category: Tool
+  desc: UI web leggera per database (1 file PHP)
+  tasks:
+    - name: Crea directory adminer
+      ansible.builtin.file:
+        path: /var/www/html/adminer
+        state: directory
+    - name: Scarica Adminer
+      ansible.builtin.get_url:
+        url: "https://www.adminer.org/latest.php"
+        dest: /var/www/html/adminer/index.php
+
+minio:
+  name: MinIO
+  category: Tool
+  desc: Object storage S3-compatibile
+  tasks:
+    - name: Scarica MinIO
+      ansible.builtin.get_url:
+        url: "https://dl.min.io/server/minio/release/linux-amd64/minio"
+        dest: /usr/local/bin/minio
+        mode: "0755"
+    - name: Crea directory dati MinIO
+      ansible.builtin.file:
+        path: /data/minio
+        state: directory
+    - name: Crea servizio systemd
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/minio.service
+        content: |
+          [Unit]
+          Description=MinIO
+          After=network.target
+          [Service]
+          Environment="MINIO_ROOT_USER=minioadmin"
+          Environment="MINIO_ROOT_PASSWORD=minioadmin"
+          ExecStart=/usr/local/bin/minio server /data/minio --console-address ":9001"
+          Restart=always
+          [Install]
+          WantedBy=multi-user.target
+    - name: Avvia e abilita MinIO
+      ansible.builtin.service:
+        name: minio
+        state: started
+        enabled: true
+        daemon_reload: true

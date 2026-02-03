@@ -1,0 +1,33 @@
+# =============================================================================
+# COPIA QUESTO FILE IN terraform.tfvars E COMPILA I VALORI
+# =============================================================================
+
+# ID del progetto Public Cloud OVH
+# Lo trovi in: OVH Manager > Public Cloud > Il tuo progetto > Project Settings
+# Esempio: "abc123def456ghi789"
+service_name = "YOUR_PROJECT_ID"
+
+# Regione OVH
+# Europa: GRA7 (Gravelines), SBG5 (Strasbourg), DE1 (Frankfurt), UK1 (London), WAW1 (Warsaw)
+# Canada: BHS5 (Beauharnois)
+# Asia: SGP1 (Singapore), SYD1 (Sydney)
+region = "GRA7"
+
+# Ambiente
+environment = "dev"
+
+# Nome progetto
+project_name = "myproject"
+
+# =============================================================================
+# CREDENZIALI (meglio usare variabili d'ambiente)
+# =============================================================================
+# Esporta queste variabili d'ambiente invece di metterle qui:
+#
+# export OVH_ENDPOINT="ovh-eu"
+# export OVH_APPLICATION_KEY="your_app_key"
+# export OVH_APPLICATION_SECRET="your_app_secret"
+# export OVH_CONSUMER_KEY="your_consumer_key"
+#
+# Per generare le chiavi vai su:
+# https://www.ovh.com/auth/api/createToken
